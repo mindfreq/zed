@@ -422,7 +422,7 @@
   "allow_rewrap": "in_comments",
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
-  "show_edit_predictions": true,
+  "show_edit_predictions": false,
   // Controls whether edit predictions are shown in a given language scope.
   // Example: ["string", "comment"]
   "edit_predictions_disabled_in": [],
@@ -975,7 +975,7 @@
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
-    "enabled": true,
+    "enabled": false,
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -1179,7 +1179,7 @@
     "show_merge_conflict_indicator": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
-  "show_call_status_icon": true,
+  "show_call_status_icon": false,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
   // Whether to perform linked edits of associated ranges, if the language server supports it.
@@ -1422,17 +1422,17 @@
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
-    "diagnostics": true,
+    "diagnostics": false,
     // Send anonymized usage data like what languages you're using Zed with.
-    "metrics": true,
+    "metrics": false,
   },
   // Whether to disable all AI features in Zed.
   //
   // Default: false
-  "disable_ai": false,
+  "disable_ai": true,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
-  "auto_update": true,
+  "auto_update": false,
   // How to render LSP `textDocument/documentColor` colors in the editor.
   //
   // Possible values:
@@ -1976,7 +1976,7 @@
   // If you don't want any of these extensions, add this field to your settings
   // and change the value to `false`.
   "auto_install_extensions": {
-    "html": true,
+    "html": false,
   },
   // The capabilities granted to extensions.
   //

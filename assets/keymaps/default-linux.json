@@ -527,8 +527,10 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "shift-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }], // Insert Cursor Above
-      "shift-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }], // Insert Cursor Below
+      "shift-alt-up": ["editor::DuplicateLineUp", { "skip_soft_wrap": true }],
+      "shift-alt-down": ["editor::DuplicateLineDown", { "skip_soft_wrap": true }],
+      "ctrl-alt-up": "editor::AddSelectionAbove",
+      "ctrl-alt-down": "editor::AddSelectionBelow",
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",

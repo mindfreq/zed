@@ -24,7 +24,7 @@ jobs:
     - name: Cache Rust dependencies and build artifacts
       uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: "v1-rust"                    # غيّر إلى v2-rust إذا أردت مسح الكاش القديم
+        prefix-key: "v1-rust"
         shared-key: "zed-linux-x64"
         workspaces: "."
         cache-on-failure: true
@@ -52,7 +52,8 @@ jobs:
           libcairo2-dev \
           libatk-bridge2.0-dev \
           libgtk-3-dev \
-          libasound2-dev
+          libasound2-dev \
+          libx11-xcb-dev
 
     - name: Run tests
       run: cargo test --workspace --no-fail-fast --locked
@@ -103,7 +104,8 @@ jobs:
           libxcb-xfixes0-dev \
           libxkbcommon-dev \
           libssl-dev \
-          libasound2-dev
+          libasound2-dev \
+          libx11-xcb-dev
 
     - name: Run clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
@@ -161,7 +163,8 @@ jobs:
           libcairo2-dev \
           libatk-bridge2.0-dev \
           libgtk-3-dev \
-          libasound2-dev
+          libasound2-dev \
+          libx11-xcb-dev
 
     - name: Build release binary
       run: cargo build --release --bin zed --locked
@@ -180,7 +183,7 @@ jobs:
 
     timeout-minutes: 60
 
-  # Create Draft Release + Upload Asset (الآن في job واحد)
+  # Create Draft Release + Upload Asset
   create_draft_release:
     needs: bundle_linux_x86_64
     runs-on: ubuntu-22.04

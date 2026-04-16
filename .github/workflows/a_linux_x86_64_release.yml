@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       CARGO_INCREMENTAL: 0
+      CC: clang
+      CXX: clang++
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
@@ -23,7 +25,7 @@ jobs:
     - name: Cache Rust dependencies and build artifacts
       uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: "v1-rust"
+        prefix-key: "v2-rust"
         shared-key: "zed-linux-x64"
         workspaces: "."
         cache-on-failure: true
@@ -34,7 +36,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y \
           build-essential \
-          clang-18 \
+          clang \
           libxkbcommon-x11-dev \
           libwayland-dev \
           libx11-dev \

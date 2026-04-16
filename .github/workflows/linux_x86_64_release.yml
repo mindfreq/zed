@@ -1,0 +1,211 @@
+name: release-linux-x64
+on:
+  push:
+    tags:
+    - v*
+
+jobs:
+  # Tests on Linux x64 (simplified, no Postgres)
+  run_tests_linux:
+    if: github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'
+    runs-on: ubuntu-22.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        clean: false
+        
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        
+    - name: Setup Linux dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          clang \
+          libxkbcommon-x11-dev \
+          libwayland-dev \
+          libx11-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev \
+          libxkbcommon-dev \
+          libssl-dev \
+          libfontconfig-dev \
+          libglib2.0-dev \
+          libpango1.0-dev \
+          libcairo2-dev \
+          libatk-bridge2.0-dev \
+          libgtk-3-dev
+        
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        
+    - name: Run tests
+      run: cargo test --workspace --no-fail-fast
+      
+    timeout-minutes: 60
+
+  # Clippy on Linux x64
+  clippy_linux:
+    if: github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'
+    runs-on: ubuntu-22.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        clean: false
+        
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        components: clippy
+        override: true
+        
+    - name: Setup Linux dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          clang \
+          libxkbcommon-x11-dev \
+          libwayland-dev \
+          libx11-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev \
+          libxkbcommon-dev \
+          libssl-dev
+        
+    - name: Run clippy
+      run: cargo clippy --workspace -- -D warnings
+      
+    timeout-minutes: 60
+
+  # Bundle Linux x64
+  bundle_linux_x86_64:
+    needs:
+    - run_tests_linux
+    - clippy_linux
+    runs-on: ubuntu-22.04
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        clean: false
+        
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        target: x86_64-unknown-linux-gnu
+        override: true
+        
+    - name: Setup Linux dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          clang-18 \
+          libxkbcommon-x11-dev \
+          libwayland-dev \
+          libx11-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev \
+          libxkbcommon-dev \
+          libssl-dev \
+          libfontconfig-dev \
+          libglib2.0-dev \
+          libpango1.0-dev \
+          libcairo2-dev \
+          libatk-bridge2.0-dev \
+          libgtk-3-dev
+        
+    - name: Download WASI SDK
+      run: |
+        mkdir -p ./target/wasi-sdk
+        # Simplified WASI setup - adjust as needed
+        echo "WASI SDK setup here"
+        
+    - name: Build release binary
+      run: cargo build --release --bin zed
+      
+    - name: Create tar.gz archive
+      run: |
+        cd target/release
+        tar -czf zed-linux-x86_64.tar.gz zed
+        
+    - name: Upload artifact - Zed Linux x64
+      uses: actions/upload-artifact@v4
+      with:
+        name: zed-linux-x86_64
+        path: target/release/zed-linux-x86_64.tar.gz
+        if-no-files-found: error
+        
+    timeout-minutes: 60
+
+  # Create draft release
+  create_draft_release:
+    needs:
+    - bundle_linux_x86_64
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Create draft release
+      uses: softprops/action-gh-release@v1
+      with:
+        draft: true
+        generate_release_notes: true
+        files: |
+          zed-linux-x86_64.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+  # Download and upload release assets
+  upload_release_assets:
+    needs:
+    - create_draft_release
+    - bundle_linux_x86_64
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts/
+        
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-artifacts/
+        mv ./artifacts/zed-linux-x86_64/zed-linux-x86_64.tar.gz release-artifacts/
+        
+    - name: Upload to release
+      uses: softprops/action-gh-release@v1
+      with:
+        draft: true
+        files: release-artifacts/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true

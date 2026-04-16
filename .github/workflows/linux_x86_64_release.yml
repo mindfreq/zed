@@ -1,9 +1,10 @@
 name: release-linux-x64
+
 on:
   workflow_dispatch:
 
 jobs:
-  # Tests on Linux x64 (simplified, no Postgres)
+  # Tests on Linux x64
   run_tests_linux:
     runs-on: ubuntu-22.04
     env:
@@ -14,14 +15,24 @@ jobs:
       uses: actions/checkout@v4
       with:
         clean: false
-        
-    - name: Setup Rust
-      uses: actions-rs/toolchain@v1
+
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
       with:
         profile: minimal
-        toolchain: stable
-        override: true
-        
+
+    - name: Cache Rust dependencies and build artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: "v1-rust"                    # غيّر إلى v2-rust إذا أردت مسح الكاش القديم
+        shared-key: "zed-linux-x64"
+        workspaces: "."
+        cache-on-failure: true
+        cache-bin: false
+        restore-keys: |
+          v1-rust-zed-linux-x64-
+          v1-rust-
+
     - name: Setup Linux dependencies
       run: |
         sudo apt-get update
@@ -41,15 +52,10 @@ jobs:
           libcairo2-dev \
           libatk-bridge2.0-dev \
           libgtk-3-dev
-        
-    - name: Setup Node
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        
+
     - name: Run tests
-      run: cargo test --workspace --no-fail-fast
-      
+      run: cargo test --workspace --no-fail-fast --locked
+
     timeout-minutes: 60
 
   # Clippy on Linux x64
@@ -64,15 +70,25 @@ jobs:
       uses: actions/checkout@v4
       with:
         clean: false
-        
-    - name: Setup Rust
-      uses: actions-rs/toolchain@v1
+
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
       with:
         profile: minimal
-        toolchain: stable
         components: clippy
-        override: true
-        
+
+    - name: Cache Rust dependencies and build artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: "v1-rust"
+        shared-key: "zed-linux-x64"
+        workspaces: "."
+        cache-on-failure: true
+        cache-bin: false
+        restore-keys: |
+          v1-rust-zed-linux-x64-
+          v1-rust-
+
     - name: Setup Linux dependencies
       run: |
         sudo apt-get update
@@ -86,13 +102,13 @@ jobs:
           libxcb-xfixes0-dev \
           libxkbcommon-dev \
           libssl-dev
-        
+
     - name: Run clippy
-      run: cargo clippy --workspace -- -D warnings
-      
+      run: cargo clippy --workspace --all-targets -- -D warnings
+
     timeout-minutes: 60
 
-  # Bundle Linux x64
+  # Bundle Linux x64 (Build + Upload Artifact)
   bundle_linux_x86_64:
     needs:
     - run_tests_linux
@@ -105,15 +121,25 @@ jobs:
       uses: actions/checkout@v4
       with:
         clean: false
-        
-    - name: Setup Rust
-      uses: actions-rs/toolchain@v1
+
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
       with:
         profile: minimal
-        toolchain: stable
         target: x86_64-unknown-linux-gnu
-        override: true
-        
+
+    - name: Cache Rust dependencies and build artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: "v1-rust"
+        shared-key: "zed-linux-x64"
+        workspaces: "."
+        cache-on-failure: true
+        cache-bin: false
+        restore-keys: |
+          v1-rust-zed-linux-x64-
+          v1-rust-
+
     - name: Setup Linux dependencies
       run: |
         sudo apt-get update
@@ -133,73 +159,42 @@ jobs:
           libcairo2-dev \
           libatk-bridge2.0-dev \
           libgtk-3-dev
-        
-    - name: Download WASI SDK
-      run: |
-        mkdir -p ./target/wasi-sdk
-        # Simplified WASI setup - adjust as needed
-        echo "WASI SDK setup here"
-        
+
     - name: Build release binary
-      run: cargo build --release --bin zed
-      
+      run: cargo build --release --bin zed --locked
+
     - name: Create tar.gz archive
       run: |
         cd target/release
         tar -czf zed-linux-x86_64.tar.gz zed
-        
-    - name: Upload artifact - Zed Linux x64
+
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: zed-linux-x86_64
         path: target/release/zed-linux-x86_64.tar.gz
         if-no-files-found: error
-        
+
     timeout-minutes: 60
 
-  # Create draft release
+  # Create Draft Release + Upload Asset (الآن في job واحد)
   create_draft_release:
-    needs:
-    - bundle_linux_x86_64
+    needs: bundle_linux_x86_64
     runs-on: ubuntu-22.04
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+    - name: Download built artifact
+      uses: actions/download-artifact@v4
       with:
-        fetch-depth: 0
-        
-    - name: Create draft release
-      uses: softprops/action-gh-release@v1
+        name: zed-linux-x86_64
+        path: ./artifacts/
+
+    - name: Create draft release and upload asset
+      uses: softprops/action-gh-release@v2
       with:
         draft: true
         generate_release_notes: true
-        files: |
-          zed-linux-x86_64.tar.gz
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-  # Download and upload release assets
-  upload_release_assets:
-    needs:
-    - create_draft_release
-    - bundle_linux_x86_64
-    runs-on: ubuntu-22.04
-    steps:
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: ./artifacts/
-        
-    - name: Prepare release assets
-      run: |
-        mkdir -p release-artifacts/
-        mv ./artifacts/zed-linux-x86_64/zed-linux-x86_64.tar.gz release-artifacts/
-        
-    - name: Upload to release
-      uses: softprops/action-gh-release@v1
-      with:
-        draft: true
-        files: release-artifacts/*
+        files: ./artifacts/zed-linux-x86_64.tar.gz
+        name: Zed Linux x64 Draft
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

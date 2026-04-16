@@ -646,8 +646,8 @@ where
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
         container_dir: PathBuf,
-        pre_release: bool,
-        cx: &mut AsyncApp,
+        _pre_release: bool,
+        _cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
         let name = self.name();
 
@@ -657,7 +657,7 @@ where
             Ok(binary)  
         } else {  
             log::debug!("no cached language server found for {:?}", name.0);  
-            // Err(anyhow::anyhow!("No cached language server binary found and downloading is disabled"))  
+            Err(anyhow::anyhow!("No cached language server binary found and downloading is disabled"))  
         }  
     }
     fn get_language_server_command(

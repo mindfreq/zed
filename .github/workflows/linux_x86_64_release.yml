@@ -1,8 +1,6 @@
 name: release-linux-x64
 on:
-  push:
-    tags:
-    - v*
+  workflow_dispatch:
 
 jobs:
   # Tests on Linux x64 (simplified, no Postgres)

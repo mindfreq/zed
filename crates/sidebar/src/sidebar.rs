@@ -1751,25 +1751,19 @@ impl Sidebar {
                             )
                             .selectable(!is_active);
 
-                        menu.when(show_multi_project_entries, |menu| {
-                            let project_group_key = project_group_key.clone();
-                            let multi_workspace = multi_workspace.clone();
-                            menu.separator()
-                                .entry("Remove Project", None, move |window, cx| {
-                                    multi_workspace
-                                        .update(cx, |multi_workspace, cx| {
-                                            multi_workspace
-                                                .remove_project_group(
-                                                    &project_group_key,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                        })
-                                        .ok();
-                                    weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                })
-                        })
+                        let project_group_key = project_group_key.clone();
+                        let multi_workspace = multi_workspace.clone();
+                        menu.separator()
+                            .entry("Remove Project", None, move |window, cx| {
+                                multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace
+                                            .remove_project_group(&project_group_key, window, cx)
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                            })
                     });
 
                 let this = this.clone();
@@ -2161,7 +2155,6 @@ impl Sidebar {
         let mut existing_panel = None;
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
                 existing_panel = Some(panel);
             }
         });
@@ -2189,7 +2182,6 @@ impl Sidebar {
                     workspace.add_panel(panel.clone(), window, cx);
                     panel.clone()
                 });
-                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
                 load_thread(panel, &metadata, focus, window, cx);
                 if focus {
                     workspace.focus_panel::<AgentPanel>(window, cx);

@@ -651,40 +651,14 @@ where
     ) -> Result<LanguageServerBinary> {
         let name = self.name();
 
-        log::debug!("fetching latest version of language server {:?}", name.0);
-        delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
-
-        let latest_version = self
-            .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
-            .await?;
-
-        if let Some(binary) = cx
-            .background_executor()
-            .await_on_background(self.check_if_version_installed(
-                &latest_version,
-                &container_dir,
-                delegate.as_ref(),
-            ))
-            .await
-        {
-            log::debug!("language server {:?} is already installed", name.0);
-            delegate.update_status(name.clone(), BinaryStatus::None);
-            Ok(binary)
-        } else {
-            log::debug!("downloading language server {:?}", name.0);
-            delegate.update_status(name.clone(), BinaryStatus::Downloading);
-            let binary = cx
-                .background_executor()
-                .await_on_background(self.fetch_server_binary(
-                    latest_version,
-                    container_dir,
-                    delegate.as_ref(),
-                ))
-                .await;
-
-            delegate.update_status(name.clone(), BinaryStatus::None);
-            binary
-        }
+        // Only use cached version, do not download if not found  
+        if let Some(binary) = self.cached_server_binary(container_dir, delegate.as_ref()).await {  
+            log::debug!("using cached language server {:?}", name.0);  
+            Ok(binary)  
+        } else {  
+            log::debug!("no cached language server found for {:?}", name.0);  
+            // Err(anyhow::anyhow!("No cached language server binary found and downloading is disabled"))  
+        }  
     }
     fn get_language_server_command(
         self: Arc<Self>,

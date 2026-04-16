@@ -733,7 +733,7 @@ impl LocalLspStore {
                 .as_ref()
                 .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
-            allow_binary_download,
+            allow_binary_download: false, // Always disable download  
             pre_release: settings
                 .fetch
                 .as_ref()

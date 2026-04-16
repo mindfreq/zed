@@ -44,7 +44,7 @@ jobs:
       run: ./script/download-wasi-sdk
 
     - name: Build and bundle
-      run: ./script/bundle-linux
+      run: ZED_CHANNEL=stable ./script/bundle-linux
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

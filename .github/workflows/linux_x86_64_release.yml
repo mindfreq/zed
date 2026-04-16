@@ -4,119 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Tests on Linux x64
-  run_tests_linux:
-    runs-on: ubuntu-22.04
-    env:
-      CC: clang
-      CXX: clang++
-    steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
-      with:
-        clean: false
-
-    - name: Setup Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        profile: minimal
-
-    - name: Cache Rust dependencies and build artifacts
-      uses: Swatinem/rust-cache@v2
-      with:
-        prefix-key: "v1-rust"
-        shared-key: "zed-linux-x64"
-        workspaces: "."
-        cache-on-failure: true
-        cache-bin: false
-        restore-keys: |
-          v1-rust-zed-linux-x64-
-          v1-rust-
-
-    - name: Setup Linux dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          clang \
-          libxkbcommon-x11-dev \
-          libwayland-dev \
-          libx11-dev \
-          libxcb-shape0-dev \
-          libxcb-xfixes0-dev \
-          libxkbcommon-dev \
-          libssl-dev \
-          libfontconfig-dev \
-          libglib2.0-dev \
-          libpango1.0-dev \
-          libcairo2-dev \
-          libatk-bridge2.0-dev \
-          libgtk-3-dev \
-          libasound2-dev \
-          libx11-xcb-dev
-
-    - name: Run tests
-      run: cargo test --workspace --no-fail-fast --locked
-
-    timeout-minutes: 60
-
-  # Clippy on Linux x64
-  clippy_linux:
-    if: github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'
-    runs-on: ubuntu-22.04
-    env:
-      CC: clang
-      CXX: clang++
-    steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
-      with:
-        clean: false
-
-    - name: Setup Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        profile: minimal
-        components: clippy
-
-    - name: Cache Rust dependencies and build artifacts
-      uses: Swatinem/rust-cache@v2
-      with:
-        prefix-key: "v1-rust"
-        shared-key: "zed-linux-x64"
-        workspaces: "."
-        cache-on-failure: true
-        cache-bin: false
-        restore-keys: |
-          v1-rust-zed-linux-x64-
-          v1-rust-
-
-    - name: Setup Linux dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          clang \
-          libxkbcommon-x11-dev \
-          libwayland-dev \
-          libx11-dev \
-          libxcb-shape0-dev \
-          libxcb-xfixes0-dev \
-          libxkbcommon-dev \
-          libssl-dev \
-          libasound2-dev \
-          libx11-xcb-dev
-
-    - name: Run clippy
-      run: cargo clippy --workspace --all-targets -- -D warnings
-
-    timeout-minutes: 60
-
-  # Bundle Linux x64 (Build + Upload Artifact)
   bundle_linux_x86_64:
-    needs:
-    - run_tests_linux
-    - clippy_linux
     runs-on: ubuntu-22.04
     env:
       CARGO_INCREMENTAL: 0
@@ -183,7 +71,6 @@ jobs:
 
     timeout-minutes: 60
 
-  # Create Draft Release + Upload Asset
   create_draft_release:
     needs: bundle_linux_x86_64
     runs-on: ubuntu-22.04

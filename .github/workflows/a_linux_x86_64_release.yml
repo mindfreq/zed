@@ -87,6 +87,7 @@ jobs:
         generate_release_notes: true
         files: ./artifacts/zed-linux-x86_64.tar.gz
         name: Zed Linux x64 Draft
+        tag_name: draft-${{ github.run_number }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

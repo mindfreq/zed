@@ -1,4 +1,4 @@
-name: release-linux-x64
+name: a-release-linux-x64
 
 on:
   workflow_dispatch:

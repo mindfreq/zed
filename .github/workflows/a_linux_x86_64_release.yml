@@ -35,6 +35,7 @@ jobs:
         workspaces: "."
         cache-on-failure: true
         cache-bin: false
+        save-if: true
 
     - name: Setup Linux dependencies
       run: ./script/linux
@@ -52,7 +53,7 @@ jobs:
         path: target/release/zed-linux-x86_64.tar.gz
         if-no-files-found: error
 
-    timeout-minutes: 60
+    timeout-minutes: 120
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}

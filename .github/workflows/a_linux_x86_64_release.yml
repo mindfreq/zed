@@ -37,6 +37,9 @@ jobs:
         cache-bin: false
         save-if: true
 
+    - name: Set release channel to stable  
+      run: echo "stable" > crates/zed/RELEASE_CHANNEL  
+
     - name: Setup Linux dependencies
       run: ./script/linux
 
@@ -44,7 +47,7 @@ jobs:
       run: ./script/download-wasi-sdk
 
     - name: Build and bundle
-      run: ZED_CHANNEL=stable ./script/bundle-linux
+      run: ./script/bundle-linux
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

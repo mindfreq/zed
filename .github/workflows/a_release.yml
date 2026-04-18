@@ -1,0 +1,261 @@
+name: release
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+on:
+  push:
+    tags:
+    - v*
+jobs:
+  run_tests_linux:
+    runs-on: ubuntu-22.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "linux"
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+    - name: steps::cargo_nextest
+      run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
+
+  clippy_linux:
+    runs-on: ubuntu-22.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "linux"
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: steps::clippy
+      run: ./script/clippy
+    timeout-minutes: 60
+
+  check_scripts:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: run_tests::check_scripts::run_shellcheck
+      run: ./script/shellcheck-scripts error
+    - id: get_actionlint
+      name: run_tests::check_scripts::download_actionlint
+      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+    - name: run_tests::check_scripts::run_actionlint
+      run: '"$ACTIONLINT_BIN" -color'
+      env:
+        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: steps::cache_rust_dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "linux"
+    - name: run_tests::check_scripts::check_xtask_workflows
+      run: |
+        cargo xtask workflows
+        if ! git diff --exit-code .github; then
+          echo "Error: .github directory has uncommitted changes after running 'cargo xtask workflows'"
+          echo "Please run 'cargo xtask workflows' locally and commit the changes"
+          exit 1
+        fi
+    timeout-minutes: 60
+
+  create_draft_release:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        fetch-depth: 25
+        ref: ${{ github.ref }}
+    - name: script/determine-release-channel
+      run: script/determine-release-channel
+    - name: mkdir -p target/
+      run: mkdir -p target/
+    - name: release::create_draft_release::generate_release_notes
+      run: node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md
+    - name: release::create_draft_release::create_release
+      run: script/create-draft-release target/release-notes.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 60
+
+  bundle_linux_aarch64:
+    needs:
+    - run_tests_linux
+    - clippy_linux
+    - check_scripts
+    runs-on: ubuntu-22.04-arm
+    env:
+      CARGO_INCREMENTAL: 0
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "linux-aarch64"
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: ./script/bundle-linux
+      run: ./script/bundle-linux
+    - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-linux-aarch64.tar.gz
+        path: target/release/zed-linux-aarch64.tar.gz
+        if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-linux-aarch64.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-linux-aarch64.gz
+        path: target/zed-remote-server-linux-aarch64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
+
+  bundle_linux_x86_64:
+    needs:
+    - run_tests_linux
+    - clippy_linux
+    - check_scripts
+    runs-on: ubuntu-22.04
+    env:
+      CARGO_INCREMENTAL: 0
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "linux-x86_64"
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: ./script/bundle-linux
+      run: ./script/bundle-linux
+    - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-linux-x86_64.tar.gz
+        path: target/release/zed-linux-x86_64.tar.gz
+        if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-linux-x86_64.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-linux-x86_64.gz
+        path: target/zed-remote-server-linux-x86_64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
+
+  upload_release_assets:
+    needs:
+    - create_draft_release
+    - bundle_linux_aarch64
+    - bundle_linux_x86_64
+    runs-on: ubuntu-22.04
+    steps:
+    - name: release::download_workflow_artifacts
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        path: ./artifacts/
+    - name: release::prep_release_artifacts
+      run: |-
+        mkdir -p release-artifacts/
+
+        mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
+        mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
+        mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
+        mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
+    - name: gh release upload
+      run: gh release upload "$GITHUB_REF_NAME" release-artifacts/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  validate_release_assets:
+    needs:
+    - upload_release_assets
+    runs-on: ubuntu-24.04
+    steps:
+    - name: release::validate_release_assets
+      run: |
+        EXPECTED_ASSETS='["zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz"]'
+        TAG="$GITHUB_REF_NAME"
+
+        ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
+
+        MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')
+
+        if [ -n "$MISSING_ASSETS" ]; then
+            echo "Error: The following assets are missing from the release:"
+            echo "$MISSING_ASSETS"
+            exit 1
+        fi
+
+        echo "All expected assets are present in the release."
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  auto_release_preview:
+    needs:
+    - validate_release_assets
+    if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
+    runs-on: ubuntu-24.04
+    steps:
+    - name: gh release edit --draft=false
+      run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

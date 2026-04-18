@@ -125,7 +125,13 @@ jobs:
           clean: false
           fetch-depth: 25
           ref: ${{ github.ref }}
-
+          
+      - name: Force stable channel
+        run: |
+          echo "stable" > crates/zed/RELEASE_CHANNEL
+          echo "RELEASE_CHANNEL=stable" >> $GITHUB_ENV
+          echo "RELEASE_VERSION=0.0.1" >> $GITHUB_ENV  
+          
       - name: script/determine-release-channel
         run: script/determine-release-channel
 

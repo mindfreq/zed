@@ -125,6 +125,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         },
                         updated_at: entry.updated_at,
                         created_at: entry.created_at,
+                        interacted_at: None,
                         worktree_paths: WorktreePaths::from_folder_paths(&entry.folder_paths),
                         remote_connection: None,
                         archived: true,
@@ -294,6 +295,9 @@ pub struct ThreadMetadata {
     pub title: Option<SharedString>,
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
+    /// When a user last interacted to send a message (including queueing).
+    /// Doesn't include the time when a queued message is fired.
+    pub interacted_at: Option<DateTime<Utc>>,
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub archived: bool,
@@ -750,6 +754,21 @@ impl ThreadMetadataStore {
         }
     }
 
+    pub fn update_interacted_at(
+        &mut self,
+        thread_id: &ThreadId,
+        time: DateTime<Utc>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.threads.get(thread_id) {
+            self.save_internal(ThreadMetadata {
+                interacted_at: Some(time),
+                ..thread.clone()
+            });
+            cx.notify();
+        };
+    }
+
     pub fn archive(
         &mut self,
         thread_id: ThreadId,
@@ -1133,12 +1152,12 @@ impl ThreadMetadataStore {
     ) {
         let view = conversation_view.read(cx);
         let thread_id = view.thread_id;
-        let Some(thread) = view.root_acp_thread(cx) else {
+        let Some(thread) = view.root_thread(cx) else {
             return;
         };
 
         let thread_ref = thread.read(cx);
-        if thread_ref.is_draft_thread() {
+        if thread_ref.is_draft_thread() || thread_ref.project().read(cx).is_via_collab() {
             return;
         }
 
@@ -1151,6 +1170,8 @@ impl ThreadMetadataStore {
         let created_at = existing_thread
             .and_then(|t| t.created_at)
             .unwrap_or_else(|| updated_at);
+
+        let interacted_at = existing_thread.and_then(|t| t.interacted_at);
 
         let agent_id = thread_ref.connection().agent_id();
 
@@ -1187,6 +1208,7 @@ impl ThreadMetadataStore {
             agent_id,
             title,
             created_at: Some(created_at),
+            interacted_at,
             updated_at,
             worktree_paths,
             remote_connection,
@@ -1290,6 +1312,9 @@ impl Domain for ThreadMetadataDb {
                 SELECT archived_worktree_id FROM thread_archived_worktrees
             );
         ),
+        sql!(
+            ALTER TABLE sidebar_threads ADD COLUMN interacted_at TEXT;
+        ),
     ];
 }
 
@@ -1306,7 +1331,7 @@ impl ThreadMetadataDb {
     }
 
     const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
-        created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
+        created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
         main_worktree_paths_order, remote_connection \
         FROM sidebar_threads \
         WHERE session_id IS NOT NULL \
@@ -1339,6 +1364,7 @@ impl ThreadMetadataDb {
             .unwrap_or_default();
         let updated_at = row.updated_at.to_rfc3339();
         let created_at = row.created_at.map(|dt| dt.to_rfc3339());
+        let interacted_at = row.interacted_at.map(|dt| dt.to_rfc3339());
         let serialized = row.folder_paths().serialize();
         let (folder_paths, folder_paths_order) = if row.folder_paths().is_empty() {
             (None, None)
@@ -1362,14 +1388,15 @@ impl ThreadMetadataDb {
         let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
                        ON CONFLICT(thread_id) DO UPDATE SET \
                            session_id = excluded.session_id, \
                            agent_id = excluded.agent_id, \
                            title = excluded.title, \
                            updated_at = excluded.updated_at, \
                            created_at = excluded.created_at, \
+                           interacted_at = excluded.interacted_at, \
                            folder_paths = excluded.folder_paths, \
                            folder_paths_order = excluded.folder_paths_order, \
                            archived = excluded.archived, \
@@ -1383,6 +1410,7 @@ impl ThreadMetadataDb {
             i = stmt.bind(&title, i)?;
             i = stmt.bind(&updated_at, i)?;
             i = stmt.bind(&created_at, i)?;
+            i = stmt.bind(&interacted_at, i)?;
             i = stmt.bind(&folder_paths, i)?;
             i = stmt.bind(&folder_paths_order, i)?;
             i = stmt.bind(&archived, i)?;
@@ -1534,6 +1562,7 @@ impl Column for ThreadMetadata {
         let (title, next): (String, i32) = Column::column(statement, next)?;
         let (updated_at_str, next): (String, i32) = Column::column(statement, next)?;
         let (created_at_str, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (interacted_at_str, next): (Option<String>, i32) = Column::column(statement, next)?;
         let (folder_paths_str, next): (Option<String>, i32) = Column::column(statement, next)?;
         let (folder_paths_order_str, next): (Option<String>, i32) =
             Column::column(statement, next)?;
@@ -1551,6 +1580,12 @@ impl Column for ThreadMetadata {
 
         let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)?.with_timezone(&Utc);
         let created_at = created_at_str
+            .as_deref()
+            .map(DateTime::parse_from_rfc3339)
+            .transpose()?
+            .map(|dt| dt.with_timezone(&Utc));
+
+        let interacted_at = interacted_at_str
             .as_deref()
             .map(DateTime::parse_from_rfc3339)
             .transpose()?
@@ -1597,6 +1632,7 @@ impl Column for ThreadMetadata {
                 },
                 updated_at,
                 created_at,
+                interacted_at,
                 worktree_paths,
                 remote_connection,
                 archived,
@@ -1686,6 +1722,7 @@ mod tests {
             },
             updated_at,
             created_at: Some(updated_at),
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
         }
@@ -1867,6 +1904,7 @@ mod tests {
             title: Some("First Thread".into()),
             updated_at: updated_time,
             created_at: Some(updated_time),
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&second_paths),
             remote_connection: None,
             archived: false,
@@ -1950,6 +1988,7 @@ mod tests {
             title: Some("Existing Metadata".into()),
             updated_at: now - chrono::Duration::seconds(10),
             created_at: Some(now - chrono::Duration::seconds(10)),
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&project_a_paths),
             remote_connection: None,
             archived: false,
@@ -2070,6 +2109,7 @@ mod tests {
             title: Some("Existing Metadata".into()),
             updated_at: existing_updated_at,
             created_at: Some(existing_updated_at),
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&project_paths),
             remote_connection: None,
             archived: false,
@@ -2743,6 +2783,7 @@ mod tests {
             title: Some("Local Linked".into()),
             updated_at: now,
             created_at: Some(now),
+            interacted_at: None,
             worktree_paths: linked_worktree_paths.clone(),
             remote_connection: None,
         };
@@ -2755,6 +2796,7 @@ mod tests {
             title: Some("Remote Linked".into()),
             updated_at: now - chrono::Duration::seconds(1),
             created_at: Some(now - chrono::Duration::seconds(1)),
+            interacted_at: None,
             worktree_paths: linked_worktree_paths,
             remote_connection: Some(remote_a.clone()),
         };
@@ -3744,6 +3786,146 @@ mod tests {
                 &main_paths_before,
                 "archived thread must retain its main worktree paths after \
                  worktree removal + subsequent thread event"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_collab_guest_threads_not_saved_to_metadata_store(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [Path::new("/project-a")], cx).await;
+
+        let (panel, mut vcx) = setup_panel_with_project(project.clone(), cx);
+        crate::test_support::open_thread_with_connection(
+            &panel,
+            StubAgentConnection::new(),
+            &mut vcx,
+        );
+        let thread = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        let thread_id = crate::test_support::active_thread_id(&panel, &vcx);
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "hello".into(), cx);
+            thread.set_title("Thread".into(), cx).detach();
+        });
+        vcx.run_until_parked();
+
+        // Confirm the thread is in the store while the project is local.
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            assert!(
+                store.read(cx).entry(thread_id).is_some(),
+                "thread must be in the store while the project is local"
+            );
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.delete(thread_id, cx);
+            });
+        });
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "more content".into(), cx);
+        });
+        vcx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            assert!(
+                store.read(cx).entry(thread_id).is_none(),
+                "threads must not be persisted while the project is a collab guest session"
+            );
+        });
+    }
+
+    // When a worktree is added to a collab project, update_thread_work_dirs
+    // fires with the new worktree paths. Without an is_via_collab() guard it
+    // overwrites the stored paths of any retained or active local threads with
+    // the new (expanded) path set, corrupting metadata that belonged to the
+    // guest's own local project.
+    #[gpui::test]
+    async fn test_collab_guest_retained_thread_paths_not_overwritten_on_worktree_change(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", serde_json::json!({})).await;
+        fs.insert_tree("/project-b", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new("/project-a")], cx).await;
+
+        let (panel, mut vcx) = setup_panel_with_project(project.clone(), cx);
+
+        // Open thread A and give it content so its metadata is saved with /project-a.
+        crate::test_support::open_thread_with_connection(
+            &panel,
+            StubAgentConnection::new(),
+            &mut vcx,
+        );
+        let thread_a_id = crate::test_support::active_thread_id(&panel, &vcx);
+        let thread_a = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        thread_a.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "hello".into(), cx);
+            thread.set_title("Thread A".into(), cx).detach();
+        });
+        vcx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let entry = store.read(cx).entry(thread_a_id).unwrap();
+            assert_eq!(
+                entry.folder_paths().paths(),
+                &[std::path::PathBuf::from("/project-a")],
+                "thread A must be saved with /project-a before collab"
+            );
+        });
+
+        // Open thread B, making thread A a retained thread in the panel.
+        crate::test_support::open_thread_with_connection(
+            &panel,
+            StubAgentConnection::new(),
+            &mut vcx,
+        );
+        vcx.run_until_parked();
+
+        // Transition the project into collab mode (simulates joining as a guest).
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+
+        // Add a second worktree. For a real collab guest this would be one of
+        // the host's worktrees arriving via the collab protocol, but here we
+        // use a local path because the test infrastructure cannot easily produce
+        // a remote worktree with a fully-scanned root entry.
+        //
+        // This fires WorktreeAdded → update_thread_work_dirs. Without an
+        // is_via_collab() guard that call overwrites the stored paths of
+        // retained thread A from {/project-a} to {/project-a, /project-b},
+        // polluting its metadata with a path it never belonged to.
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(Path::new("/project-b"), true, cx)
+            })
+            .await
+            .unwrap();
+        vcx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let entry = store
+                .read(cx)
+                .entry(thread_a_id)
+                .expect("thread A must still exist in the store");
+            assert_eq!(
+                entry.folder_paths().paths(),
+                &[std::path::PathBuf::from("/project-a")],
+                "retained thread A's stored path must not be updated while the project is via collab"
             );
         });
     }

@@ -80,8 +80,8 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tab, Tooltip,
-    prelude::*, utils::WithRemSize,
+    Button, Callout, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle,
+    Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -246,7 +246,7 @@ pub fn init(cx: &mut App) {
                         .and_then(|conversation| {
                             conversation
                                 .read(cx)
-                                .active_thread()
+                                .root_thread_view()
                                 .map(|r| r.read(cx).thread.clone())
                         });
 
@@ -797,7 +797,7 @@ impl AgentPanel {
             Some(
                 conversation
                     .read(cx)
-                    .root_thread(cx)?
+                    .root_thread_view()?
                     .read(cx)
                     .thread
                     .read(cx)
@@ -1287,7 +1287,7 @@ impl AgentPanel {
         };
         if let Some(draft) = &self.draft_thread {
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
-            let has_editor_content = draft.read(cx).active_thread().is_some_and(|tv| {
+            let has_editor_content = draft.read(cx).root_thread_view().is_some_and(|tv| {
                 !tv.read(cx)
                     .message_editor
                     .read(cx)
@@ -1321,7 +1321,7 @@ impl AgentPanel {
         conversation_view: &Entity<ConversationView>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(acp_thread) = conversation_view.read(cx).root_acp_thread(cx) {
+        if let Some(acp_thread) = conversation_view.read(cx).root_thread(cx) {
             self._draft_editor_observation = Some(cx.subscribe(
                 &acp_thread,
                 |this, _, e: &AcpThreadEvent, cx| {
@@ -1333,7 +1333,7 @@ impl AgentPanel {
         } else {
             let cv = conversation_view.clone();
             self._draft_editor_observation = Some(cx.observe(&cv, |this, cv, cx| {
-                if cv.read(cx).root_acp_thread(cx).is_some() {
+                if cv.read(cx).root_thread(cx).is_some() {
                     this.observe_draft_editor(&cv, cx);
                 }
             }));
@@ -1421,7 +1421,7 @@ impl AgentPanel {
                 }
                 _ => None,
             })?;
-        let tv = cv.read(cx).active_thread()?;
+        let tv = cv.read(cx).root_thread_view()?;
         let text = tv.read(cx).message_editor.read(cx).text(cx);
         if text.trim().is_empty() {
             None
@@ -1443,7 +1443,7 @@ impl AgentPanel {
                 _ => None,
             });
         let Some(cv) = cv else { return };
-        let Some(tv) = cv.read(cx).active_thread() else {
+        let Some(tv) = cv.read(cx).root_thread_view() else {
             return;
         };
         let editor = tv.read(cx).message_editor.clone();
@@ -1581,7 +1581,7 @@ impl AgentPanel {
             return;
         };
 
-        let Some(active_thread) = conversation_view.read(cx).active_thread().cloned() else {
+        let Some(active_thread) = conversation_view.read(cx).root_thread_view() else {
             return;
         };
 
@@ -2051,15 +2051,14 @@ impl AgentPanel {
 
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
         let server_view = self.active_conversation_view()?;
-        server_view.read(cx).active_thread().cloned()
+        server_view.read(cx).root_thread_view()
     }
 
     pub fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.base_view {
-            BaseView::AgentThread { conversation_view } => conversation_view
-                .read(cx)
-                .active_thread()
-                .map(|r| r.read(cx).thread.clone()),
+            BaseView::AgentThread { conversation_view } => {
+                conversation_view.read(cx).root_thread(cx)
+            }
             _ => None,
         }
     }
@@ -2076,7 +2075,7 @@ impl AgentPanel {
 
         for conversation_view in conversation_views {
             if *thread_id == conversation_view.read(cx).thread_id {
-                if let Some(thread_view) = conversation_view.read(cx).root_thread_view(cx) {
+                if let Some(thread_view) = conversation_view.read(cx).root_thread_view() {
                     thread_view.update(cx, |view, cx| view.cancel_generation(cx));
                     return true;
                 }
@@ -2091,13 +2090,13 @@ impl AgentPanel {
         let mut views = Vec::new();
 
         if let Some(server_view) = self.active_conversation_view() {
-            if let Some(thread_view) = server_view.read(cx).root_thread(cx) {
+            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
                 views.push(thread_view);
             }
         }
 
         for server_view in self.retained_threads.values() {
-            if let Some(thread_view) = server_view.read(cx).root_thread(cx) {
+            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
                 views.push(thread_view);
             }
         }
@@ -2119,6 +2118,10 @@ impl AgentPanel {
             conversation_view.update(cx, |conversation_view, cx| {
                 conversation_view.set_work_dirs(new_work_dirs.clone(), cx);
             });
+        }
+
+        if self.project.read(cx).is_via_collab() {
+            return;
         }
 
         // Update metadata store so threads' path lists stay in sync with
@@ -2164,7 +2167,7 @@ impl AgentPanel {
             .retained_threads
             .iter()
             .filter(|(_id, view)| {
-                let Some(thread_view) = view.read(cx).root_thread(cx) else {
+                let Some(thread_view) = view.read(cx).root_thread_view() else {
                     return true;
                 };
                 let thread = thread_view.read(cx).thread.read(cx);
@@ -2391,7 +2394,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Subscription> {
-        server_view.read(cx).active_thread().cloned().map(|tv| {
+        server_view.read(cx).root_thread_view().map(|tv| {
             cx.subscribe_in(
                 &tv,
                 window,
@@ -3808,13 +3811,16 @@ impl AgentPanel {
         let content = match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => {
                 let server_view_ref = conversation_view.read(cx);
-                let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
-                    && server_view_ref.root_thread(cx).map_or(false, |tv| {
-                        tv.read(cx).thread.read(cx).has_provisional_title()
-                    });
+                let native_thread = server_view_ref.as_native_thread(cx);
+                let is_generating_title = native_thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.read(cx).is_generating_title());
+                let title_generation_failed = native_thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.read(cx).has_failed_title_generation());
 
                 if let Some(title_editor) = server_view_ref
-                    .root_thread(cx)
+                    .root_thread_view()
                     .map(|r| r.read(cx).title_editor.clone())
                 {
                     if is_generating_title {
@@ -3830,8 +3836,8 @@ impl AgentPanel {
                             )
                             .into_any_element()
                     } else {
-                        div()
-                            .w_full()
+                        let editable_title = div()
+                            .flex_1()
                             .on_action({
                                 let conversation_view = conversation_view.downgrade();
                                 move |_: &menu::Confirm, window, cx| {
@@ -3848,8 +3854,33 @@ impl AgentPanel {
                                     }
                                 }
                             })
-                            .child(title_editor)
-                            .into_any_element()
+                            .child(title_editor);
+
+                        if title_generation_failed {
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .items_center()
+                                .child(editable_title)
+                                .child(
+                                    IconButton::new("retry-thread-title", IconName::XCircle)
+                                        .icon_color(Color::Error)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Title generation failed. Retry"))
+                                        .on_click({
+                                            let conversation_view = conversation_view.clone();
+                                            move |_event, _window, cx| {
+                                                Self::handle_regenerate_thread_title(
+                                                    conversation_view.clone(),
+                                                    cx,
+                                                );
+                                            }
+                                        }),
+                                )
+                                .into_any_element()
+                        } else {
+                            editable_title.w_full().into_any_element()
+                        }
                     }
                 } else {
                     Label::new(conversation_view.read(cx).title(cx))
@@ -3880,7 +3911,10 @@ impl AgentPanel {
         conversation_view.update(cx, |conversation_view, cx| {
             if let Some(thread) = conversation_view.as_native_thread(cx) {
                 thread.update(cx, |thread, cx| {
-                    thread.generate_title(cx);
+                    if !thread.is_generating_title() {
+                        thread.generate_title(cx);
+                        cx.notify();
+                    }
                 });
             }
         });
@@ -3897,12 +3931,14 @@ impl AgentPanel {
             BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
             _ => None,
         };
-        let thread_with_messages = match &self.base_view {
-            BaseView::AgentThread { conversation_view } => {
-                conversation_view.read(cx).has_user_submitted_prompt(cx)
-            }
-            _ => false,
-        };
+
+        let can_regenerate_thread_title =
+            conversation_view.as_ref().is_some_and(|conversation_view| {
+                let conversation_view = conversation_view.read(cx);
+                conversation_view.has_user_submitted_prompt(cx)
+                    && conversation_view.as_native_thread(cx).is_some()
+            });
+
         let has_auth_methods = match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
                 conversation_view.read(cx).has_auth_methods()
@@ -3933,7 +3969,7 @@ impl AgentPanel {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
 
-                        if thread_with_messages {
+                        if can_regenerate_thread_title {
                             menu = menu.header("Current Thread");
 
                             if let Some(conversation_view) = conversation_view.as_ref() {
@@ -6825,7 +6861,7 @@ mod tests {
         // Verify thread A's (background) work_dirs are also updated.
         let updated_a_paths = panel.read_with(&cx, |panel, cx| {
             let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
-            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            let root_thread = bg_view.read(cx).root_thread_view().unwrap();
             root_thread
                 .read(cx)
                 .thread
@@ -6845,7 +6881,7 @@ mod tests {
         // Verify thread idle C was also updated.
         let updated_c_paths = panel.read_with(&cx, |panel, cx| {
             let bg_view = panel.retained_threads.get(&thread_id_c).unwrap();
-            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            let root_thread = bg_view.read(cx).root_thread_view().unwrap();
             root_thread
                 .read(cx)
                 .thread
@@ -6899,7 +6935,7 @@ mod tests {
 
         let after_remove_a = panel.read_with(&cx, |panel, cx| {
             let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
-            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            let root_thread = bg_view.read(cx).root_thread_view().unwrap();
             root_thread
                 .read(cx)
                 .thread
@@ -8049,6 +8085,103 @@ mod tests {
                 vec![PathBuf::from("/plain_dir")],
                 "plain_dir should be classified as a non-git path \
                  (not matched to nested_repo inside it)"
+            );
+        });
+    }
+    #[gpui::test]
+    async fn test_vim_search_does_not_steal_focus_from_agent_panel(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            vim::init(cx);
+            search::init(cx);
+
+            // Enable vim mode
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |s| s.vim_mode = Some(true));
+            });
+
+            // Load vim keybindings
+            let mut vim_key_bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure("keymaps/vim.json", cx)
+                    .unwrap();
+            for key_binding in &mut vim_key_bindings {
+                key_binding.set_meta(settings::KeybindSource::Vim.meta());
+            }
+            cx.bind_keys(vim_key_bindings);
+        });
+
+        // Create a project with a file so we have a buffer in the center pane.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "hello world" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Open a file in the center pane.
+        workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![PathBuf::from("/project/file.txt")],
+                    workspace::OpenOptions::default(),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        cx.run_until_parked();
+
+        // Add a BufferSearchBar to the center pane's toolbar, as a real
+        // workspace would have.
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    let search_bar = cx.new(|cx| search::BufferSearchBar::new(None, window, cx));
+                    toolbar.add_item(search_bar, window, cx);
+                });
+            });
+        });
+
+        // Create the agent panel and add it to the workspace.
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Open a thread so the panel has an active editor.
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+
+        // Focus the agent panel.
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        // Verify the agent panel has focus.
+        workspace.update_in(&mut cx, |_, window, cx| {
+            assert!(
+                panel.read(cx).focus_handle(cx).contains_focused(window, cx),
+                "Agent panel should be focused before pressing '/'"
+            );
+        });
+
+        // Press '/' — the vim search keybinding.
+        cx.simulate_keystrokes("/");
+
+        // Focus should remain on the agent panel.
+        workspace.update_in(&mut cx, |_, window, cx| {
+            assert!(
+                panel.read(cx).focus_handle(cx).contains_focused(window, cx),
+                "Focus should remain on the agent panel after pressing '/'"
             );
         });
     }
